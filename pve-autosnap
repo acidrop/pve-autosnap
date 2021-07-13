@@ -74,6 +74,11 @@ getvms ()
 vms=($(/usr/sbin/qm list | awk '{print$1}' | sed 1d))
 }
 
+getcts ()
+{
+cts=($(/usr/sbin/pct list | awk '{print$1}' | sed 1d))
+}
+
 cleansnapshots ()
 {
     if [[ "$leave" != "" ]] ; then
@@ -82,10 +87,30 @@ cleansnapshots ()
         for snap in "${snapshots[@]}"
         do
             if [ "$i" -ge "$leave" ] ; then
-                echo "vm$vm: Removing snapshot $snap"
+                #echo "vm$vm: Removing snapshot $snap"
                 /usr/sbin/qm delsnapshot $vm $snap 
             else
-                echo "vm$vm: Saving snapshot $snap"
+                echo "vm$vm: Saving snapshot $snap" &>/dev/null
+            fi
+            
+            let i++
+
+        done
+    fi
+}
+
+cleansnapshotsct ()
+{
+    if [[ "$leave" != "" ]] ; then
+        snapshots=($(grep -Po "(?<=\[).*(?=\])" "/etc/pve/nodes/$(hostname)/lxc/$vm.conf" | grep ^"$snapprefix" | tac))
+        i=0
+        for snap in "${snapshots[@]}"
+        do
+            if [ "$i" -ge "$leave" ] ; then
+                #echo "vm$vm: Removing snapshot $snap"
+                /usr/sbin/pct delsnapshot $vm $snap 
+            else
+                echo "vm$vm: Saving snapshot $snap" &>/dev/null
             fi
             
             let i++
@@ -114,6 +139,26 @@ sleepsnapshot ()
     fi
 }
 
+sleepsnapshotct ()
+{
+    if [ "$sleepmodifier" != "" ] ; then 
+            disksizes=($(sed '/^\[.*\]$/q' /etc/pve/nodes/$(hostname)/lxc/$vm.conf | grep "$storage:vm-$vm" | sed  -r -e 's/.*size=[^0-9]*//g ; s/[^MG0-9]*//g'))
+
+            for disksize in "${disksizes[@]}"
+            do
+                if [[ $disksize == *"G" ]] ;
+                then disksize=($(echo $disksize | sed 's/[^0-9]//g')) 
+                else disksize=$[($(echo $disksize | sed 's/[^0-9]//g'))/1024/1024/1024] ; fi
+
+                sleeptime=$[$disksize/$sleepmodifier]
+                if [ $sleeptime = 0 ] ; then sleeptime=1; fi
+
+                sleep ${sleeptime}m
+            done
+
+    fi
+}
+
 autosnapshot ()
 {
 for vm in "${vms[@]}"
@@ -121,10 +166,26 @@ do
     storagecheck=($(sed '/^\[.*\]$/q' /etc/pve/nodes/$(hostname)/qemu-server/$vm.conf | grep -ci "$storage:[vm-]*$vm"))
 
     if [[ "$storagecheck" > "0" ]] ; then
-        echo "vm$vm: Creating snapshot $snapname"
-        /usr/sbin/qm snapshot $vm $snapname
+        #echo "vm$vm: Creating snapshot $snapname"
+        /usr/sbin/qm snapshot $vm $snapname &>/dev/null
         sleepsnapshot
         cleansnapshots
+    fi
+
+done
+}
+
+autosnapshotct ()
+{
+for vm in "${cts[@]}"
+do
+    storagecheck=($(sed '/^\[.*\]$/q' /etc/pve/nodes/$(hostname)/lxc/$vm.conf | grep -ci "$storage:[vm-]*$vm"))
+
+    if [[ "$storagecheck" > "0" ]] ; then
+        #echo "vm$vm: Creating snapshot $snapname"
+        /usr/sbin/pct snapshot $vm $snapname &>/dev/null
+        sleepsnapshotct
+        cleansnapshotsct
     fi
 
 done
@@ -134,3 +195,5 @@ loadkeys $@
 gensnapname
 getvms
 autosnapshot
+getcts
+autosnapshotct
